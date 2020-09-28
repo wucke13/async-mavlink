@@ -4,6 +4,11 @@ version = "0.1.0"
 authors = ["wucke13 <wucke13@gmail.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
+description = "An async adapter for mavlink conections"
+readme = "README.md"
+repository = "https://github.com/wucke13/async-mavlink"
+categories = [ "asynchronous", "network-programming", "science::robotics" ]
+keywords = [ "async", "mavlink", "subscribe", "sub" ]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
