@@ -2,20 +2,21 @@
 
 # async-mavlink
 
-Async adapter for the [mavlink](https://docs.rs/mavlink/) lib
+Async adapter for the [mavlink](https://docs.rs/mavlink/) crate
 
-The mavlink lib offers a low level API for MAVLink connections. This crate offers a thin async
-API on top of that. The main addition is a subscribe based communication model, where the user
-can subscribe to a certain type of message. In order for this to function, it is necessary to
-execute the even loop of the connector as task. This library however aims to be executor
-independent, e.g. it should work with all executors.
+The mavlink crate offers a low level API for MAVLink connections. This crate adds a thin
+async API on top of that. The most important feature is a subscribe based communication model.
+It allows the user to subscribe to a certain type of message. All subsequent messages of that
+type then can be received in a async stream. In order for this to function, it is necessary to
+execute the event loop of the connector as a task. This crate aims to be executor independent,
+e.g. it should work with all async executors.
 
-This library so far is a proof of concept. While it might serve your usecase well, expect
-things to break. Contributions and suggestions are wellcome!
+This so far is only a proof of concept. While it might serve your usecase well, expect things
+to break. Contributions and suggestions are wellcome!
 
 ## Example: Pulling all Parameters from a Vehicle
 
-In this example we will utilize the subscribe method to collect all parameters of the vehicle.
+In this example the subscribe method is utilized to collect all parameters of the vehicle.
 
 ```rust
 use std::collections::HashMap;
@@ -24,7 +25,6 @@ use mavlink::common::*;
 use smol::prelude::*;
 
 smol::block_on(async {
-#
     // connect
     let (conn, future) = AsyncMavConn::new("udpin:127.0.0.1:14551")?;
 
