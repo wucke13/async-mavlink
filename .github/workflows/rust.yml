@@ -40,7 +40,6 @@ jobs:
       run: cargo test --verbose
    
   clippy_check:
-    needs: fetch-definitions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
