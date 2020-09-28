@@ -1,4 +1,6 @@
 [![Workflow Status](https://github.com/wucke13/async-mavlink/workflows/main/badge.svg)](https://github.com/wucke13/async-mavlink/actions?query=workflow%3A%22main%22)
+[![Percentage of issues still open](https://isitmaintained.com/badge/open/wucke13/async-mavlink.svg)](https://isitmaintained.com/project/wucke13/async-mavlink "Percentage of issues still open")
+![Maintenance](https://img.shields.io/badge/maintenance-activly--developed-brightgreen.svg)
 
 # async-mavlink
 

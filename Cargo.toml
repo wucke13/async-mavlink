@@ -19,3 +19,5 @@ smol = "1"
 
 [badges]
 github = { repository = "wucke13/async-mavlink" }
+is-it-maintained-open-issues = { repository = "wucke13/async-mavlink" }
+maintenance = { status = "actively-developed" }
