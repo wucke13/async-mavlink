@@ -16,7 +16,6 @@ keywords = [ "async", "mavlink", "subscribe", "sub" ]
 arc-swap = "0.4"
 blocking = "1"
 futures = "0.3"
-futures-timer = "3"
 mavlink = "0.8"
 
 [dev-dependencies]
