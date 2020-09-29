@@ -374,11 +374,11 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use mavlink::common::MavMessage;
+    use mavlink::common::*;
     use std::time::Duration;
 
     #[test]
-    fn test_subscribe() -> std::io::Result<()> {
+    fn subscribe() -> std::io::Result<()> {
         smol::block_on(async {
             let (conn, future) = AsyncMavConn::new("udpin:127.0.0.7:14551")?;
             smol::spawn(async move { future.await }).detach();
@@ -404,6 +404,67 @@ mod test {
                 if i > 5 {
                     break;
                 }
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn send() -> std::io::Result<()> {
+        smol::block_on(async {
+            let (conn, future) = AsyncMavConn::new("udpout:127.0.0.8:14551")?;
+            smol::spawn(async move { future.await }).detach();
+
+            let mut raw_conn = mavlink::connect("udpin:127.0.0.8:14551").unwrap();
+            raw_conn.set_protocol_version(mavlink::MavlinkVersion::V1);
+            let received = blocking::unblock(move || raw_conn.recv());
+
+            smol::spawn(async move {
+                let header = mavlink::MavHeader::default();
+                let message = MavMessage::HEARTBEAT(HEARTBEAT_DATA::default());
+                for _ in 0..100 {
+                    conn.send(&header, &message).await.unwrap();
+                }
+            })
+            .detach();
+
+            let received = received.await;
+            assert!(received.is_ok());
+
+            if let Ok((_, MavMessage::HEARTBEAT(_))) = received {
+            } else {
+                panic!("received wrong message");
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn send_default() -> std::io::Result<()> {
+        smol::block_on(async {
+            let (conn, future) = AsyncMavConn::new("udpout:127.0.0.9:14551")?;
+            smol::spawn(async move { future.await }).detach();
+
+            let mut raw_conn = mavlink::connect("udpin:127.0.0.9:14551").unwrap();
+            raw_conn.set_protocol_version(mavlink::MavlinkVersion::V1);
+            let received = blocking::unblock(move || raw_conn.recv());
+
+            smol::spawn(async move {
+                let message = MavMessage::HEARTBEAT(HEARTBEAT_DATA::default());
+                for _ in 0..100 {
+                    conn.send_default(&message).await.unwrap();
+                }
+            })
+            .detach();
+
+            let received = received.await;
+            assert!(received.is_ok());
+
+            if let Ok((_, MavMessage::HEARTBEAT(_))) = received {
+            } else {
+                panic!("received wrong message");
             }
 
             Ok(())
