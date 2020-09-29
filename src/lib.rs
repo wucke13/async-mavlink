@@ -99,7 +99,10 @@ pub struct AsyncMavConn<M: mavlink::Message> {
 }
 
 enum Operation<M: mavlink::Message> {
-    Send((MavHeader, M)),
+    Emit {
+        header: MavHeader,
+        message: M,
+    },
     Subscribe {
         message_type: MavMessageType<M>,
         backchannel: UnboundedSender<M>,
@@ -132,10 +135,6 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
     /// })
     /// # }
     /// ```
-    // impl Future<Output=impl Send> + Send
-    //
-    // <U: Future<Output=()>, F: FnOnce() -> U>
-    //Pin<Box<dyn Future<Output = ()> + Send>>
     pub fn new(address: &str) -> io::Result<(Self, impl Future<Output = impl Send> + Send)> {
         let mut conn = mavlink::connect::<M>(address)?;
         conn.set_protocol_version(mavlink::MavlinkVersion::V1);
@@ -160,7 +159,6 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
 
                 let heartbeat_id =
                     mavlink::common::MavMessage::HEARTBEAT(Default::default()).message_id();
-
                 loop {
                     match combined.next().await.unwrap() {
                         Either::Left(Operation::Subscribe {
@@ -171,6 +169,9 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
                                 .entry(message_type)
                                 .or_insert_with(|| Vec::with_capacity(1));
                             subs.push(backchannel);
+                        }
+                        Either::Left(Operation::Emit { header, message }) => {
+                            conn.send(&header, &message).expect("Oh no!");
                         }
                         Either::Right(Ok((_header, msg))) => {
                             if msg.message_id() == heartbeat_id {
@@ -328,7 +329,10 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
     pub async fn send(&self, header: &MavHeader, message: &M) -> io::Result<()> {
         self.tx
             .clone() // TODO get rid of clone
-            .send(Operation::Send((*header, message.clone())))
+            .send(Operation::Emit {
+                header: *header,
+                message: message.clone(),
+            })
             .await
             .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))
     }
@@ -358,11 +362,7 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
     /// # })}
     /// ```
     pub async fn send_default(&self, message: &M) -> io::Result<()> {
-        self.tx
-            .clone() // TODO get rid of clone
-            .send(Operation::Send((MavHeader::default(), message.clone())))
-            .await
-            .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))
+        Ok(self.send(&MavHeader::default(), message).await?)
     }
 
     /// Returns the `Instant` from the last received HEARTBEAT
