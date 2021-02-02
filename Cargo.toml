@@ -13,8 +13,8 @@ keywords = [ "async", "mavlink", "subscribe", "sub" ]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-arc-swap = "0.4"
-blocking = "1"
+arc-swap = "1.2"
+blocking = "1.0"
 futures = "0.3"
 mavlink = "0.8"
 

@@ -17,7 +17,7 @@
 //! ```
 //! use std::collections::HashMap;
 //! use async_mavlink::{AsyncMavConn, MavMessageType, to_string};
-//! use mavlink::common::*;
+//! use mavlink::{MavlinkVersion, common::*};
 //! use smol::prelude::*;
 //!
 //! # fn main()->std::io::Result<()>{
@@ -35,7 +35,7 @@
 //! #       }
 //! #   }).detach();
 //!     // connect
-//!     let (conn, future) = AsyncMavConn::new("udpin:127.0.0.1:14551")?;
+//!     let (conn, future) = AsyncMavConn::new("udpin:127.0.0.1:14551", MavlinkVersion::V1)?;
 //!     
 //!     // start event loop
 //!     smol::spawn(async move { future.await }).detach();
@@ -95,7 +95,7 @@ pub use util::*;
 /// Offers high level functionality to interact with a MAVLink vehicle in an async fashion.
 pub struct AsyncMavConn<M: mavlink::Message> {
     tx: UnboundedSender<Operation<M>>,
-    last_heartbeat: ArcSwapOption<Instant>,
+    last_heartbeat: Arc<ArcSwapOption<Instant>>,
 }
 
 enum Operation<M: mavlink::Message> {
@@ -122,12 +122,12 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
     ///
     /// ```
     /// use async_mavlink::AsyncMavConn;
-    /// use mavlink::common::MavMessage;
+    /// use mavlink::{MavlinkVersion, common::MavMessage};
     /// use smol::prelude::*;
     ///
     /// # fn main() -> std::io::Result<()> {
     /// smol::block_on(async {
-    ///     let (conn, future) = AsyncMavConn::new("udpbcast:127.0.0.2:14551")?;
+    ///     let (conn, future) = AsyncMavConn::new("udpbcast:127.0.0.2:14551", MavlinkVersion::V1)?;
     ///     smol::spawn(async move { future.await }).detach();
     ///     // ...
     /// #   conn.send_default(&MavMessage::HEARTBEAT(Default::default())).await?;
@@ -135,11 +135,14 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
     /// })
     /// # }
     /// ```
-    pub fn new(address: &str) -> io::Result<(Self, impl Future<Output = impl Send> + Send)> {
+    pub fn new(
+        address: &str,
+        mavlink_version: mavlink::MavlinkVersion,
+    ) -> io::Result<(Arc<Self>, impl Future<Output = impl Send> + Send)> {
         let mut conn = mavlink::connect::<M>(address)?;
-        conn.set_protocol_version(mavlink::MavlinkVersion::V1);
+        conn.set_protocol_version(mavlink_version);
         let (tx, rx) = channel::unbounded();
-        let last_heartbeat = ArcSwapOption::from(None);
+        let last_heartbeat = Arc::new(ArcSwapOption::from(None));
 
         // the ectual event loop
         let f = {
@@ -159,6 +162,11 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
 
                 let heartbeat_id =
                     mavlink::common::MavMessage::HEARTBEAT(Default::default()).message_id();
+
+                // Event loop
+                //
+                // In here we process everything. By making this not concurrent itself, we can
+                // afford not to use locks at all!
                 loop {
                     match combined.next().await.unwrap() {
                         Either::Left(Operation::Subscribe {
@@ -194,7 +202,7 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
             }
         };
 
-        Ok((Self { tx, last_heartbeat }, Box::pin(f)))
+        Ok((Arc::new(Self { tx, last_heartbeat }), Box::pin(f)))
     }
 
     /// Subscribe to all new MavMessages of the given MavMessageType
@@ -211,11 +219,11 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
     /// # use std::time::Duration;
     /// # use futures::prelude::*;
     /// use async_mavlink::{AsyncMavConn, MavMessageType};
-    /// use mavlink::common::MavMessage;
+    /// use mavlink::{MavlinkVersion, common::MavMessage};
     ///
     /// # fn main() -> std::io::Result<()> {
     /// # smol::block_on(async {
-    /// # let (conn, future) = AsyncMavConn::new("udpin:127.0.0.3:14551")?;
+    /// # let (conn, future) = AsyncMavConn::new("udpin:127.0.0.3:14551", MavlinkVersion::V1)?;
     /// # smol::spawn(async move { future.await; }).detach();
     /// # smol::spawn(async {
     /// #   let mut conn = mavlink::connect("udpout:127.0.0.3:14551").unwrap();
@@ -262,11 +270,11 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
     /// # use std::time::Duration;
     /// # use futures::prelude::*;
     /// use async_mavlink::{AsyncMavConn, MavMessageType};
-    /// use mavlink::common::MavMessage;
+    /// use mavlink::{MavlinkVersion, common::MavMessage};
     ///                                                                                       
     /// # fn main() -> std::io::Result<()> {
     /// # smol::block_on(async {
-    /// # let (conn, future) = AsyncMavConn::new("udpin:127.0.0.4:14551")?;
+    /// # let (conn, future) = AsyncMavConn::new("udpin:127.0.0.4:14551", MavlinkVersion::V1)?;
     /// # smol::spawn(async move { future.await; }).detach();
     /// # smol::spawn(async {
     /// #   let mut conn = mavlink::connect("udpout:127.0.0.4:14551").unwrap();
@@ -311,11 +319,11 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
     /// # use futures::prelude::*;
     /// # use async_mavlink::AsyncMavConn;
     /// use async_mavlink::MavMessageType;
-    /// use mavlink::{MavHeader, common::*};
+    /// use mavlink::{MavHeader, MavlinkVersion, common::*};
     ///                                                                                       
     /// # fn main() -> std::io::Result<()> {
     /// # smol::block_on(async {
-    /// # let (conn, future) = AsyncMavConn::new("udpbcast:127.0.0.5:14551")?;
+    /// # let (conn, future) = AsyncMavConn::new("udpbcast:127.0.0.5:14551", MavlinkVersion::V1)?;
     /// let header = MavHeader::default();
     /// let message = MavMessage::PARAM_REQUEST_LIST(PARAM_REQUEST_LIST_DATA {
     ///     target_component: 0,
@@ -347,11 +355,11 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
     ///
     /// ```
     /// # use async_mavlink::AsyncMavConn;
-    /// use mavlink::common::*;
+    /// use mavlink::{MavlinkVersion,common::*};
     ///                                                                                       
     /// # fn main() -> std::io::Result<()> {
     /// # smol::block_on(async {
-    /// # let (conn, future) = AsyncMavConn::new("udpbcast:127.0.0.6:14551")?;
+    /// # let (conn, future) = AsyncMavConn::new("udpbcast:127.0.0.6:14551", MavlinkVersion::V1)?;
     /// let message = MavMessage::PARAM_REQUEST_LIST(PARAM_REQUEST_LIST_DATA {
     ///     target_component: 0,
     ///     target_system: 0,
@@ -376,12 +384,18 @@ mod test {
     use super::*;
     use mavlink::common::*;
     use std::time::Duration;
+    async fn new_conn<M: 'static + mavlink::Message + Clone + Send + Sync>(
+        arg: &str,
+    ) -> Arc<AsyncMavConn<M>> {
+        let (conn, future) = AsyncMavConn::new(arg, mavlink::MavlinkVersion::V1).unwrap();
+        smol::spawn(async move { future.await }).detach();
+        conn
+    }
 
     #[test]
     fn subscribe() -> std::io::Result<()> {
         smol::block_on(async {
-            let (conn, future) = AsyncMavConn::new("udpin:127.0.0.7:14551")?;
-            smol::spawn(async move { future.await }).detach();
+            let conn = new_conn("udpin:127.0.0.7:14551").await;
 
             smol::spawn(async move {
                 let mut conn = mavlink::connect("udpout:127.0.0.7:14551").unwrap();
@@ -413,8 +427,7 @@ mod test {
     #[test]
     fn send() -> std::io::Result<()> {
         smol::block_on(async {
-            let (conn, future) = AsyncMavConn::new("udpout:127.0.0.8:14551")?;
-            smol::spawn(async move { future.await }).detach();
+            let conn = new_conn("udpout:127.0.0.8:14551").await;
 
             let mut raw_conn = mavlink::connect("udpin:127.0.0.8:14551").unwrap();
             raw_conn.set_protocol_version(mavlink::MavlinkVersion::V1);
@@ -423,7 +436,7 @@ mod test {
             smol::spawn(async move {
                 let header = mavlink::MavHeader::default();
                 let message = MavMessage::HEARTBEAT(HEARTBEAT_DATA::default());
-                for _ in 0..100 {
+                for _ in 0usize..100 {
                     conn.send(&header, &message).await.unwrap();
                 }
             })
@@ -444,8 +457,7 @@ mod test {
     #[test]
     fn send_default() -> std::io::Result<()> {
         smol::block_on(async {
-            let (conn, future) = AsyncMavConn::new("udpout:127.0.0.9:14551")?;
-            smol::spawn(async move { future.await }).detach();
+            let conn = new_conn("udpout:127.0.0.9:14551").await;
 
             let mut raw_conn = mavlink::connect("udpin:127.0.0.9:14551").unwrap();
             raw_conn.set_protocol_version(mavlink::MavlinkVersion::V1);
@@ -453,7 +465,7 @@ mod test {
 
             smol::spawn(async move {
                 let message = MavMessage::HEARTBEAT(HEARTBEAT_DATA::default());
-                for _ in 0..100 {
+                for _ in 0usize..100 {
                     conn.send_default(&message).await.unwrap();
                 }
             })
