@@ -377,6 +377,47 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
     pub async fn last_heartbeat(&self) -> Option<Instant> {
         self.last_heartbeat.load_full().map(|arc| *arc)
     }
+
+    /*
+        async fn macro_test(&self) {
+            macro_rules! subscribe_ {
+                // + MavMessage::PARAM_REQUEST_LIST
+                //
+                //($conn:expr, $message:) =>{
+
+                  //  subscribe_!($conn, $message, $message(data));
+                //};
+
+                ($conn:expr, $message:path) => {{
+                    use ::futures::{
+                        channel::mpsc::{self as channel, UnboundedSender},
+                        prelude::*,
+                        StreamExt,
+                    };
+
+                    let message_example =  $message(Default::default());// (Default::default());
+                    let message_type = MavMessageType::new(&message_example);
+                    let (backchannel, rx) = channel::unbounded();
+
+                    $conn.tx
+                        .clone()
+                        .send(Operation::Subscribe {
+                            message_type,
+                            backchannel,
+                        })
+                    .await
+                        .unwrap(); // infailable
+
+                    Box::pin(rx.filter_map(|msg| match msg {
+                        $message(data) => Some(data),
+                        _ => None,
+                    }))
+                }};
+            }
+
+            subscribe_!(self, mavlink::common::MavMessage::PARAM_REQUEST_LIST);
+        }
+    */
 }
 
 #[cfg(test)]
