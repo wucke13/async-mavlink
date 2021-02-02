@@ -3,6 +3,25 @@ use std::mem::{discriminant, Discriminant};
 
 use mavlink::Message;
 
+use thiserror::Error;
+
+// TODO find better names for all of this
+/// Error type
+#[derive(Error, Debug)]
+pub enum AsyncMavlinkError {
+    /// IO Error encountered when trying to communicate with the MAV
+    #[error("connection to MAV lost")]
+    ConnectionLost(#[from] std::io::Error),
+
+    /// The event loop does not take our call
+    #[error("unable to emit task to event loop")]
+    TaskEmit(#[from] futures::channel::mpsc::SendError),
+
+    /// The event loop canceled our send request
+    #[error("the event loop canceled our send ack channel")]
+    SendAck(#[from] futures::channel::oneshot::Canceled),
+}
+
 /// Representation of the type of a specific MavMessage
 pub struct MavMessageType<M: Message>(Discriminant<M>);
 impl<M: mavlink::Message> Eq for MavMessageType<M> {}
@@ -30,7 +49,7 @@ impl<M: Message> MavMessageType<M> {
     ///
     /// ```
     /// use mavlink::common::MavMessage;
-    /// use async_mavlink::MavMessageType;
+    /// use async_mavlink::prelude::*;
     ///
     /// let message_type = MavMessageType::new(&MavMessage::PARAM_VALUE(Default::default()));
     /// ```

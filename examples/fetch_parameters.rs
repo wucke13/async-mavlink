@@ -1,23 +1,23 @@
 use std::collections::HashMap;
-use std::io::{Error, ErrorKind, Result};
 use std::time::Duration;
 
-use async_mavlink::{to_string, AsyncMavConn, MavMessageType};
+use async_mavlink::prelude::*;
 use mavlink::common::*;
 use smol::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> Result<(), AsyncMavlinkError> {
     let args: Vec<_> = std::env::args().collect();
     if args.len() < 2 {
-        return Err(Error::new(
-            ErrorKind::InvalidInput,
-            "Usage: (tcpout|tcpin|udpout|udpin|udpbcast|serial|file):(ip|dev|path):(port|baud)",
-        ));
+        println!(
+            "Usage: (tcpout|tcpin|udpout|udpin|udpbcast|serial|file):(ip|dev|path):(port|baud)"
+        );
+        return Ok(());
     }
 
     smol::block_on(async {
         println!("connecting");
-        let (conn, future) = AsyncMavConn::new(&args[1], mavlink::MavlinkVersion::V1)?;
+        let (conn, future) = AsyncMavConn::new(&args[1], mavlink::MavlinkVersion::V1)
+            .map_err(|e| AsyncMavlinkError::from(e))?;
 
         println!("starting event loop");
         smol::spawn(async move { future.await }).detach();
@@ -40,7 +40,7 @@ fn main() -> Result<()> {
 
         println!("subscribing to PARAM_VALUE");
         let msg_type = MavMessageType::new(&MavMessage::PARAM_VALUE(Default::default()));
-        let mut stream = conn.subscribe(msg_type).await;
+        let mut stream = conn.subscribe(msg_type).await?;
 
         println!("sending request for all parameters");
         let msg_request = MavMessage::PARAM_REQUEST_LIST(Default::default());
