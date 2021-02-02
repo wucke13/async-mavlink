@@ -17,7 +17,7 @@ fn main() -> Result<(), AsyncMavlinkError> {
     smol::block_on(async {
         println!("connecting");
         let (conn, future) = AsyncMavConn::new(&args[1], mavlink::MavlinkVersion::V1)
-            .map_err(|e| AsyncMavlinkError::from(e))?;
+            .map_err(AsyncMavlinkError::from)?;
 
         println!("starting event loop");
         smol::spawn(async move { future.await }).detach();

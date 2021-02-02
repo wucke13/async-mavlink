@@ -362,8 +362,8 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
                 backchannel,
             })
             .await
-            .map_err(|e| AsyncMavlinkError::from(e))?;
-        receiver.await.map_err(|e| AsyncMavlinkError::from(e))?
+            .map_err( AsyncMavlinkError::from)?;
+        receiver.await.map_err(AsyncMavlinkError::from)?
     }
 
     /// Send a `MavMessage` to the vehicle
