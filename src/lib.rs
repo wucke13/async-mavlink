@@ -90,7 +90,7 @@ pub mod prelude;
 mod types;
 mod util;
 
-pub use types::{AsyncMavlinkError,MavMessageType};
+pub use types::{AsyncMavlinkError, MavMessageType};
 pub use util::{to_char_arr, to_string};
 
 /// An async adapter for a MAVLink connection
@@ -264,7 +264,7 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
     pub async fn subscribe(
         &self,
         message_type: MavMessageType<M>,
-    ) -> Result<Pin<Box<dyn Stream<Item = M>>>,AsyncMavlinkError> {
+    ) -> Result<Pin<Box<dyn Stream<Item = M>>>, AsyncMavlinkError> {
         let (backchannel, rx) = mpsc::unbounded();
 
         self.task_dispatcher
@@ -362,7 +362,7 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
                 backchannel,
             })
             .await
-            .map_err( AsyncMavlinkError::from)?;
+            .map_err(AsyncMavlinkError::from)?;
         receiver.await.map_err(AsyncMavlinkError::from)?
     }
 
@@ -447,7 +447,7 @@ mod test {
     }
 
     #[test]
-    fn send() -> Result<(),AsyncMavlinkError> {
+    fn send() -> Result<(), AsyncMavlinkError> {
         smol::block_on(async {
             let conn = new_conn("udpout:127.0.0.8:14551").await;
 
