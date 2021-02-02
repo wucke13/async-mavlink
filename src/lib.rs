@@ -87,6 +87,9 @@ use mavlink::{MavHeader, Message};
 mod types;
 mod util;
 
+#[cfg(feature = "parameter_repo")]
+mod parameter_repo;
+
 pub use types::MavMessageType;
 pub use util::*;
 

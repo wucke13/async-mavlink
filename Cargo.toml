@@ -21,6 +21,10 @@ mavlink = "0.8"
 [dev-dependencies]
 smol = "1"
 
+[features]
+default = [ "parameter_repo" ]
+parameter_repo = []
+
 [badges]
 github = { repository = "wucke13/async-mavlink" }
 is-it-maintained-open-issues = { repository = "wucke13/async-mavlink" }
