@@ -87,6 +87,10 @@ use futures::{
 use mavlink::{MavHeader, Message};
 
 pub mod prelude;
+
+#[cfg(feature = "parameter_repo")]
+pub mod parameter_repo;
+
 mod types;
 mod util;
 
