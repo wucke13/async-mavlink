@@ -22,13 +22,13 @@ In this example the subscribe method is utilized to collect all parameters of th
 
 ```rust
 use std::collections::HashMap;
-use async_mavlink::{AsyncMavConn, MavMessageType, to_string};
-use mavlink::common::*;
+use async_mavlink::prelude::*;
+use mavlink::{MavlinkVersion, common::*};
 use smol::prelude::*;
 
 smol::block_on(async {
     // connect
-    let (conn, future) = AsyncMavConn::new("udpin:127.0.0.1:14551")?;
+    let (conn, future) = AsyncMavConn::new("udpin:127.0.0.1:14551", MavlinkVersion::V1)?;
 
     // start event loop
     smol::spawn(async move { future.await }).detach();
@@ -37,7 +37,7 @@ smol::block_on(async {
     let msg_type = MavMessageType::new(&MavMessage::PARAM_VALUE(Default::default()));
 
     // subscribe to PARAM_VALUE message
-    let mut stream = conn.subscribe(msg_type).await;
+    let mut stream = conn.subscribe(msg_type).await?;
 
     // and send one PARAM_REQUEST_LIST message
     let msg_request = MavMessage::PARAM_REQUEST_LIST(Default::default());
