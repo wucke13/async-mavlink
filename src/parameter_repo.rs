@@ -1,41 +1,51 @@
 //! This module contains a repository for parameters.
 //!
 //! It implements robust communication, that is it should work just fine even if some packet loss
-//! appears. Per design this is a singleton: if you crate more than one `ParameterRepo`, changes
-//! from one repo will not automagically be propagated to the other
+//! appears. This however results in weird runtime characteristics, many of the algorithms in use
+//! try endlessly to achieve their goal. If the MAV does not respond to our messages, these will
+//! never terminate.
 //!
 //!
 //! # Examples
 //!
 //! ```
-//! //let (conn, future) = AsyncMavConn::new("udpin:127.0.0.1:14551")?;
+//! // let (conn, future) = AsyncMavConn::new("udpin:127.0.0.1:14551")?;
 //! // start event loop
-//! //smol::spawn(async move { future.await }).detach();
-//! //let repo = ParameterRepo::new(&conn);
+//! // smol::spawn(async move { future.await }).detach();
+//! // let repo = ParameterRepo::new(&conn);
 //!
 //!
-//! //let param = repo.get("AHR_ORIENTATION").await;
+//! // let param = repo.get("AHR_ORIENTATION").await;
 //!
-//! //println!("paramater name = {}", param.name());
-//! //println!("parameter value = {}", param.value().await);
-//! //println!("parameter new_value = {}", param.set(23.0).await)
+//! // println!("parameter name = {}", param.name());
+//! // println!("parameter value = {}", param.value().await);
+//! // println!("parameter new_value = {}", param.set(23.0).await)
 //! ```
 
 use crate::util::*;
-use mavlink::common::{MavMessage, PARAM_VALUE_DATA};
+use mavlink::common::{MavMessage, MavParamType, PARAM_VALUE_DATA};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::{future::Either, prelude::*, StreamExt};
 
 use crate::prelude::*;
 use std::pin::Pin;
 
-/// TODO
+/// A parameter repository with included cache
+///
+/// The repo processes new parameters with potential new values only on method calls. The time for
+/// a call to finish can vary widly, depending for example on the ammount of enqueued PARAM_VALUE
+/// messages which need to be processed.
+///
+/// The algorithm in sync also assumes that we can consume PARAM_VALUE messages from the MAV faster
+/// than it can produce them - otherwise some of the loops will never terminate. Under normal
+/// circumstances this is safe assumption to make - parameters should not change frequently all the
+/// time.
 pub struct ParameterRepo<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> {
     conn: Arc<AsyncMavConn<MavMessage>>,
-    params: HashMap<String, f32>,
+    params: HashMap<String, (f32, MavParamType)>,
     missing_indexes: HashSet<u16>,
     new_params: Pin<Box<dyn Stream<Item = MavMessage>>>,
     param_count: u16,
@@ -46,6 +56,8 @@ pub struct ParameterRepo<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin,
 
 impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F, T, U> {
     /// Initialize a new parameter repo
+    ///
+    ///
     pub async fn new(
         conn: Arc<AsyncMavConn<MavMessage>>,
         target_system: u8,
@@ -72,7 +84,7 @@ impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F,
         // wait for first param_value to happen
         // the repo will only work as expected once `update()`
         // did actually process one PARAM_VALUE message.
-        while !repo.update().await? {
+        while repo.update().await?.is_none() {
             (repo.timeout_fn)(Duration::from_millis(10)).await;
         }
 
@@ -81,11 +93,12 @@ impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F,
 
     /// get a parameters value
     pub async fn get(&mut self, param_name: &str) -> Result<Option<f32>, AsyncMavlinkError> {
-        self.update().await?;
+        // process all enqueued messages
+        while self.update().await?.is_some() {}
 
         loop {
             match self.params.get(param_name) {
-                Some(value) => return Ok(Some(*value)),
+                Some((value, _)) => return Ok(Some(*value)),
                 None if self.all_synced() => {
                     return Ok(None);
                 }
@@ -98,53 +111,98 @@ impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F,
 
     /// Get all parameters
     pub async fn get_all(&mut self) -> Result<HashMap<String, f32>, AsyncMavlinkError> {
-        while !self.all_synced() {
-            self.update().await?;
-        }
+        // process all enqueued messages and keep going until we got a full sync
+        while !self.all_synced() || self.update().await?.is_some() {}
 
-        Ok(self.params.clone())
+        Ok(self
+            .params
+            .iter()
+            .map(|(k, (v, _))| (k.clone(), *v))
+            .collect())
     }
 
-    /*
-    pub async fn set(&mut self, param_name: &str, param_value:f32 ){
-        let msg = PARAM_SET_DATA {
-            target_system: 1, // TODO handle this better
-            target_component: 1, // TODO handle this better
-            param_id: to_char_arr(param_name),
-            param_value: param_value,
-            param_type:
+    /// Set a parameter
+    ///
+    /// For this to work, a full sync needs to be done
+    pub async fn set(
+        &mut self,
+        param_name: &str,
+        param_value: f32,
+    ) -> Result<bool, AsyncMavlinkError> {
+        // process all enqueued messages and keep going until we got a full sync
+        while !self.all_synced() || self.update().await?.is_some() {}
 
-        };
+        // do we know this param?
+        Ok(match self.params.get(param_name) {
+            Some((_old_value, param_type)) => {
+                let msg = MavMessage::PARAM_SET(mavlink::common::PARAM_SET_DATA {
+                    target_system: self.target_system,
+                    target_component: self.target_component,
+                    param_id: to_char_arr(param_name),
+                    param_value,
+                    param_type: *param_type,
+                });
+                // request change of parameter
+                self.conn.send_default(&msg).await?;
+                let mut last_send = Instant::now();
 
-        self.conn.send_default(&MavMessage::PARAM_SET(msg));
+                // while change was not acknowledged
+                loop {
+                    match self.update().await? {
+                        Some(_) => {
+                            if self
+                                .params
+                                .get(param_name)
+                                .map(|(value, _)| *value == param_value)
+                                .unwrap_or(false)
+                            {
+                                return Ok(true);
+                            }
+                        }
+                        None => {
+                            if last_send.elapsed() > Duration::from_millis(100) {
+                                self.conn.send_default(&msg).await?;
+                                last_send = Instant::now();
+                            }
+                        }
+                    }
+                }
+            }
+            None => false,
+        })
     }
-     */
 
+    /// Determines if we are fully synced
+    ///
+    /// For this to work at least one PARAM_VALUE message has to have been processed already.
     fn all_synced(&self) -> bool {
         self.missing_indexes.is_empty() && (self.param_count as usize == self.params.len())
     }
 
-    async fn process_message(&mut self, msg: MavMessage) -> Result<(), AsyncMavlinkError> {
+    /// Process a message, updates or invalidates the cache according to new intel derived from the
+    /// message
+    async fn process_message(&mut self, msg: &MavMessage) -> Result<(), AsyncMavlinkError> {
         match msg {
             MavMessage::PARAM_VALUE(PARAM_VALUE_DATA {
                 param_count,
                 param_id,
                 param_index,
                 param_value,
-                ..
+                param_type,
             }) => {
-                if param_count != self.param_count {
+                if *param_count != self.param_count {
                     // oh, the param_count changed. A new MAV? Better safe than sorry, let's invalidate the cache.
                     // let's also request all parameters again.
                     self.conn.send_default(&self.mav_request_list()).await?;
-                    self.param_count = param_count;
+                    self.param_count = *param_count;
                     self.params.clear();
                     self.missing_indexes = (0..self.param_count).collect();
                 }
 
                 // We now have the param with this value in cache
                 self.missing_indexes.remove(&param_index);
-                self.params.insert(to_string(&param_id), param_value);
+                self.params
+                    .insert(to_string(param_id), (*param_value, *param_type));
             }
             _ => {
                 panic!("Oh no");
@@ -153,19 +211,18 @@ impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F,
         Ok(())
     }
 
-    /// refresh the repo
-    ///
-    /// The bool tells us, if something happened
-    async fn update(&mut self) -> Result<bool, AsyncMavlinkError> {
-        let mut processed_a_message = false;
-
-        match self.all_synced() {
+    /// Process up to one enqueued message
+    /// If a message was processed, it is returned in the Option
+    async fn update(&mut self) -> Result<Option<MavMessage>, AsyncMavlinkError> {
+        Ok(match self.all_synced() {
             true => {
                 if let Some(msg) = self.new_params.next().now_or_never().flatten() {
-                    processed_a_message = true;
-                    self.process_message(msg).await?
+                    self.process_message(&msg).await?;
+                    Some(msg)
+                } else {
+                    None
                 }
-            } // TODO handle error
+            } // TODO
             false => {
                 match future::select(
                     (self.timeout_fn)(Duration::from_millis(100)),
@@ -180,19 +237,19 @@ impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F,
                                 .send_default(&self.mav_param_read("", *index as i16))
                                 .await?;
                         }
+                        None
                     }
                     Either::Right((Some(msg), _)) => {
-                        self.process_message(msg).await?;
-                        processed_a_message = true;
+                        self.process_message(&msg).await?;
+                        Some(msg)
                     }
-                    _ => {}
+                    _ => None,
                 }
             }
-        }
-
-        Ok(processed_a_message)
+        })
     }
 
+    /// generate a new PARAM_READ message
     fn mav_param_read(&self, param_id: &str, param_index: i16) -> MavMessage {
         use mavlink::common::*;
         MavMessage::PARAM_REQUEST_READ(PARAM_REQUEST_READ_DATA {
@@ -203,6 +260,7 @@ impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F,
         })
     }
 
+    /// generate a new REQUEST_LIST message
     fn mav_request_list(&self) -> MavMessage {
         use mavlink::common::*;
         MavMessage::PARAM_REQUEST_LIST(PARAM_REQUEST_LIST_DATA {

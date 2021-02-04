@@ -4,6 +4,7 @@
 //! opentaws::prelude::*`.
 
 pub use crate::{
+    parameter_repo::ParameterRepo,
     types::{AsyncMavlinkError, MavMessageType},
     util::*,
     AsyncMavConn,
