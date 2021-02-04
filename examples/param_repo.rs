@@ -1,9 +1,16 @@
 use std::time::Duration;
 
 use async_mavlink::{parameter_repo::ParameterRepo, prelude::*};
+use futures::future::FutureExt;
 use mavlink::common::*;
+use simple_logger::SimpleLogger;
 
 fn main() -> Result<(), AsyncMavlinkError> {
+    SimpleLogger::new()
+        .with_level(log::LevelFilter::Debug)
+        .init()
+        .unwrap();
+
     let args: Vec<_> = std::env::args().collect();
     if args.len() < 2 {
         println!(
@@ -36,7 +43,7 @@ fn main() -> Result<(), AsyncMavlinkError> {
         .detach();
 
         println!("initializing the parameter repo");
-        let timeout_fn = |d| smol::Timer::after(d);
+        let timeout_fn = |d| Box::new(smol::Timer::after(d).map(|_| ())) as _;
         let mut repo = ParameterRepo::new(conn, 1, 1, timeout_fn).await?;
 
         for (k, v) in repo.get_all().await? {

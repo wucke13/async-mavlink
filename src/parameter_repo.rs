@@ -43,7 +43,7 @@ use std::pin::Pin;
 /// than it can produce them - otherwise some of the loops will never terminate. Under normal
 /// circumstances this is safe assumption to make - parameters should not change frequently all the
 /// time.
-pub struct ParameterRepo<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> {
+pub struct ParameterRepo {
     conn: Arc<AsyncMavConn<MavMessage>>,
     params: HashMap<String, (f32, MavParamType)>,
     missing_indexes: HashSet<u16>,
@@ -51,14 +51,14 @@ pub struct ParameterRepo<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin,
     param_count: u16,
     target_system: u8,
     target_component: u8,
-    timeout_fn: F,
+    timeout_fn: Box<(dyn FnMut(Duration) -> Box<dyn Future<Output = ()> + Unpin>)>,
 }
 
-impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F, T, U> {
+impl ParameterRepo {
     /// Initialize a new parameter repo
     ///
     ///
-    pub async fn new(
+    pub async fn new<F: 'static + FnMut(Duration) -> Box<dyn Future<Output = ()> + Unpin>>(
         conn: Arc<AsyncMavConn<MavMessage>>,
         target_system: u8,
         target_component: u8,
@@ -66,6 +66,7 @@ impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F,
     ) -> Result<Self, AsyncMavlinkError> {
         let msg_type = MavMessageType::new(&MavMessage::PARAM_VALUE(Default::default()));
         let new_params = conn.subscribe(msg_type).await?;
+        let timeout_fn = Box::new(timeout_fn);
 
         let mut repo = Self {
             conn,
@@ -86,6 +87,7 @@ impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F,
         // did actually process one PARAM_VALUE message.
         while repo.update().await?.is_none() {
             (repo.timeout_fn)(Duration::from_millis(10)).await;
+            panic!("not blocked");
         }
 
         Ok(repo)
@@ -112,7 +114,7 @@ impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F,
     /// Get all parameters
     pub async fn get_all(&mut self) -> Result<HashMap<String, f32>, AsyncMavlinkError> {
         // process all enqueued messages and keep going until we got a full sync
-        while !self.all_synced() || self.update().await?.is_some() {}
+        while self.update().await?.is_some() || !self.all_synced() {}
 
         Ok(self
             .params
@@ -205,7 +207,7 @@ impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F,
                     .insert(to_string(param_id), (*param_value, *param_type));
             }
             _ => {
-                panic!("Oh no");
+                panic!("this is impossible");
             }
         }
         Ok(())
@@ -224,24 +226,20 @@ impl<F: FnMut(Duration) -> T, T: Future<Output = U> + Unpin, U> ParameterRepo<F,
                 }
             } // TODO
             false => {
-                match future::select(
-                    (self.timeout_fn)(Duration::from_millis(100)),
-                    self.new_params.next(),
-                )
-                .await
-                {
-                    Either::Left((_, _)) if self.missing_indexes.is_empty() => {
-                        // we are still missing indexes and quite some time passed since we receive the last PARAM_VALUE message
-                        if let Some(index) = self.missing_indexes.iter().next() {
+                let timeout = (self.timeout_fn)(Duration::from_millis(100));
+                match future::select(self.new_params.next(), timeout).await {
+                    Either::Left((Some(msg), _)) => {
+                        self.process_message(&msg).await?;
+                        Some(msg)
+                    }
+                    Either::Right(_) => {
+                        // ask for all missing ones
+                        for index in self.missing_indexes.iter() {
                             self.conn
                                 .send_default(&self.mav_param_read("", *index as i16))
                                 .await?;
                         }
                         None
-                    }
-                    Either::Right((Some(msg), _)) => {
-                        self.process_message(&msg).await?;
-                        Some(msg)
                     }
                     _ => None,
                 }
