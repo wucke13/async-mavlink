@@ -31,7 +31,11 @@ fn main() -> Result<(), AsyncMavlinkError> {
         smol::spawn({
             let conn = conn.clone();
             async move {
-                let heartbeat = MavMessage::HEARTBEAT(HEARTBEAT_DATA::default());
+                let mut data = HEARTBEAT_DATA::default();
+                data.mavtype = MavType::MAV_TYPE_GCS;
+                data.autopilot = MavAutopilot::MAV_AUTOPILOT_INVALID;
+
+                let heartbeat = MavMessage::HEARTBEAT(data);
                 loop {
                     conn.send_default(&heartbeat)
                         .await
