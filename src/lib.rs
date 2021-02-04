@@ -68,6 +68,7 @@
 #![deny(unsafe_code)]
 
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
@@ -114,7 +115,7 @@ enum Task<M: mavlink::Message> {
 }
 
 // TODO make this failable if no heartbeat is received
-impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
+impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M> {
     /// Construct a new MavlinkConnectionHandler
     ///
     /// # Arguments
@@ -145,11 +146,19 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
     ) -> Result<(Arc<Self>, impl Future<Output = impl Send> + Send), AsyncMavlinkError> {
         let mut conn = mavlink::connect::<M>(address)?;
         conn.set_protocol_version(mavlink_version);
+        #[cfg(feature = "logging")]
+        log::debug!(
+            "connected to `{}` using MAVLink {:?}",
+            address,
+            mavlink_version
+        );
         let (task_dispatcher, incoming_tasks) = mpsc::unbounded();
         let last_heartbeat = Arc::new(ArcSwapOption::from(None));
 
         let f = {
             let last_heartbeat = last_heartbeat.clone();
+            #[cfg(feature = "logging")]
+            log::debug!("started event loop");
             async move {
                 let mut subscriptions: HashMap<_, Vec<UnboundedSender<M>>> = HashMap::new();
                 let conn = Arc::new(conn);
@@ -178,6 +187,8 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
                             message_type,
                             backchannel,
                         }) => {
+                            #[cfg(feature = "logging")]
+                            log::debug!("subscribed to {}", message_type);
                             // find existing subscriptions for this message
                             let message_subs = subscriptions
                                 .entry(message_type)
@@ -193,20 +204,43 @@ impl<M: 'static + mavlink::Message + Clone + Send + Sync> AsyncMavConn<M> {
                         }) => {
                             // Send the message and send back any error which occurred on sending
                             let result = conn.send(&header, &message).map_err(|e| e.into());
+                            #[cfg(feature = "logging")]
+                            log::trace!(
+                                "sent a message to system {}, component {}:\n{:#?}",
+                                header.system_id,
+                                header.component_id,
+                                message
+                            );
                             let _ = backchannel.send(result); // TODO handle this
                         }
-                        Either::Right(Ok((_header, msg))) => {
-                            if msg.message_id() == heartbeat_id {
+                        Either::Right(Ok((_header, message))) => {
+                            if message.message_id() == heartbeat_id {
+                                #[cfg(feature = "logging")]
+                                log::debug!(
+                                    "received heartbeat from system {}, component {}",
+                                    _header.system_id,
+                                    _header.component_id
+                                );
                                 last_heartbeat.rcu(|_| Some(Arc::new(Instant::now())));
+                            } else {
+                                #[cfg(feature = "logging")]
+                                log::trace!(
+                                    "received a message from system {}, component {}:\n{:?}",
+                                    _header.system_id,
+                                    _header.component_id,
+                                    message
+                                );
                             }
                             subscriptions
-                                .entry(MavMessageType::new(&msg))
+                                .entry(MavMessageType::new(&message))
                                 .or_insert_with(Vec::new)
                                 .retain(|mut backchannel| match backchannel.is_closed() {
                                     true => false,
                                     false => {
-                                        futures::executor::block_on(backchannel.send(msg.clone()))
-                                            .expect("unable to do this");
+                                        futures::executor::block_on(
+                                            backchannel.send(message.clone()),
+                                        )
+                                        .expect("unable to do this");
                                         true
                                     }
                                 });
@@ -406,7 +440,7 @@ mod test {
     use super::*;
     use mavlink::common::*;
     use std::time::Duration;
-    async fn new_conn<M: 'static + mavlink::Message + Clone + Send + Sync>(
+    async fn new_conn<M: 'static + mavlink::Message + Clone + Debug + Send + Sync>(
         arg: &str,
     ) -> Arc<AsyncMavConn<M>> {
         let (conn, future) = AsyncMavConn::new(arg, mavlink::MavlinkVersion::V1).unwrap();

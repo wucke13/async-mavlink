@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::mem::{discriminant, Discriminant};
 
@@ -23,11 +24,14 @@ pub enum AsyncMavlinkError {
 }
 
 /// Representation of the type of a specific MavMessage
-pub struct MavMessageType<M: Message>(Discriminant<M>);
+pub struct MavMessageType<M: Message> {
+    name: String,
+    discriminant: Discriminant<M>,
+}
 impl<M: mavlink::Message> Eq for MavMessageType<M> {}
 impl<M: mavlink::Message> PartialEq for MavMessageType<M> {
     fn eq(&self, rhs: &Self) -> bool {
-        self.0.eq(&rhs.0)
+        self.discriminant.eq(&rhs.discriminant)
     }
 }
 impl<M: mavlink::Message> Hash for MavMessageType<M> {
@@ -35,11 +39,11 @@ impl<M: mavlink::Message> Hash for MavMessageType<M> {
     where
         H: Hasher,
     {
-        self.0.hash(hasher)
+        self.discriminant.hash(hasher)
     }
 }
 
-impl<M: Message> MavMessageType<M> {
+impl<M: Message + Debug> MavMessageType<M> {
     /// Returns the `MavMessageType` of a `MavMessage`
     ///
     /// # Arguments
@@ -54,7 +58,23 @@ impl<M: Message> MavMessageType<M> {
     /// let message_type = MavMessageType::new(&MavMessage::PARAM_VALUE(Default::default()));
     /// ```
     pub fn new(message: &M) -> MavMessageType<M> {
+        let name = format!("{:?}", message)
+            .split('(')
+            .take(1)
+            .next()
+            .unwrap_or("")
+            .to_string();
+
         #[allow(clippy::mem_discriminant_non_enum)]
-        Self(discriminant(message))
+        Self {
+            name,
+            discriminant: discriminant(message),
+        }
+    }
+}
+
+impl<M: Message> std::fmt::Display for MavMessageType<M> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
     }
 }

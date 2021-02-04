@@ -20,9 +20,17 @@ blocking = "1.0"
 futures = "0.3"
 mavlink = "0.8"
 thiserror = "1.0"
+log = { version = "0.4", optional = true }
+
+
+[features]
+default = [ "logging" ]
+logging = [ "log" ]
 
 [dev-dependencies]
+simple_logger = "1"
 smol = "1"
+log = "*"
 
 [badges]
 github = { repository = "wucke13/async-mavlink" }
