@@ -32,6 +32,10 @@ simple_logger = "1"
 smol = "1"
 log = "*"
 
+[features]
+default = [ "parameter_repo" ]
+parameter_repo = []
+
 [badges]
 github = { repository = "wucke13/async-mavlink" }
 is-it-maintained-open-issues = { repository = "wucke13/async-mavlink" }
