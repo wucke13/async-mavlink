@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
 use async_mavlink::prelude::*;
@@ -48,5 +47,7 @@ fn main() -> Result<(), AsyncMavlinkError> {
         while let Some(MavMessage::HEARTBEAT(data)) = (stream.next()).await {
             println!("Heatbeat received:\n{:?}", data);
         }
+
+        Ok(())
     })
 }
