@@ -6,21 +6,24 @@ use mavlink::Message;
 
 use thiserror::Error;
 
-// TODO find better names for all of this
-/// Error type
+/// Error type for the [`async_mavlink` crate](crate)
 #[derive(Error, Debug)]
+#[allow(missing_docs)]
 pub enum AsyncMavlinkError {
-    /// IO Error encountered when trying to communicate with the MAV
-    #[error("connection to MAV lost")]
-    ConnectionLost(#[from] std::io::Error),
+    #[error("error on opening connection to the target system")]
+    ConnectionRefused(#[from] std::io::Error),
 
-    /// The event loop does not take our call
+    #[error("connection to the target system broke")]
+    ConnectionLost(#[from] mavlink::error::MessageWriteError),
+
     #[error("unable to emit task to event loop")]
     TaskEmit(#[from] futures::channel::mpsc::SendError),
 
-    /// The event loop canceled our send request
-    #[error("the event loop canceled our send ack channel")]
+    #[error("the event loop canceled a send ack channel")]
     SendAck(#[from] futures::channel::oneshot::Canceled),
+
+    #[error("the maximum number of retries was reached")]
+    MaxRetriesReached,
 }
 
 /// Representation of the type of a specific MavMessage
@@ -65,7 +68,7 @@ impl<M: Message + Debug> MavMessageType<M> {
             .unwrap_or("")
             .to_string();
 
-        #[allow(clippy::mem_discriminant_non_enum)]
+        #[allow(enum_intrinsics_non_enums)]
         Self {
             name,
             discriminant: discriminant(message),
