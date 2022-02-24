@@ -40,8 +40,8 @@ use std::pin::Pin;
 pub struct ParameterProtocol<
     F: FnMut() -> Box<dyn Future<Output = T> + Unpin>,
     T,
-    const N: usize = 64,
-    const R: u16 = 50,
+    const N: usize,
+    const R: u16,
 > {
     conn: Arc<AsyncMavConn<MavMessage>>,
     params: HashMap<String, (f32, MavParamType)>,
