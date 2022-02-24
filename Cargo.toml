@@ -15,10 +15,12 @@ keywords = [ "async", "mavlink", "subscribe", "sub" ]
 pre-release-hook = [ "./pre-release-hook.sh" ]
 
 [dependencies]
-arc-swap = "1.2"
+arc-swap = "1"
+async-trait = "0.1"
 blocking = "1.0"
 futures = "0.3"
-mavlink = "0.8"
+lazy_static = "1.4"
+mavlink = "0.10"
 thiserror = "1.0"
 log = { version = "0.4", optional = true }
 
@@ -29,9 +31,8 @@ log = "*"
 
 
 [features]
-default = [ "logging", "parameter_repo" ]
-parameter_repo = []
-logging = [ "log" ]
+default = ["parameter_protocol" ]
+parameter_protocol = []
 
 
 [badges]

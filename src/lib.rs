@@ -1,14 +1,14 @@
 //! Async adapter for the [mavlink](https://docs.rs/mavlink/) crate
 //!
-//! The mavlink crate offers a low level API for MAVLink connections. This crate adds a thin
-//! async API on top of that. The most important feature is a subscribe based communication model.
-//! It allows the user to subscribe to a certain type of message. All subsequent messages of that
-//! type then can be received in a async stream. In order for this to function, it is necessary to
-//! execute the event loop of the connector as a task. This crate aims to be executor independent,
-//! e.g. it should work with all async executors.
+//! The mavlink crate offers a low level API for MAVLink connections. This crate adds a thin async
+//! API on top of that. The most important feature is a subscription based communication model. It
+//! allows the user to subscribe to a certain type of message. All subsequent messages of that type
+//! then can be received in a async stream. In order for this to function, it is necessary to
+//! execute the event loop of the connector as a task. This crate aims to be executor independent
+//! --- it _should_ work with all async executors.
 //!
-//! This so far is only a proof of concept. While it might serve your usecase well, expect things
-//! to break. Contributions and suggestions are wellcome!
+//! This so far is only an early alpha. While it might serve your use-case well, expect things to
+//! break. Contributions and suggestions are welcome!
 //!
 //! # Example: Pulling all Parameters from a Vehicle
 //!
@@ -60,12 +60,16 @@
 //!     }
 //!
 //!     // do something with parameters
-//! # Ok(())    
+//!     
+//!
+//!     Ok(())    
 //! })
 //! # }
 //! ```
+#![deny(dead_code)]
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
+#![deny(warnings)]
 
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -89,8 +93,8 @@ use mavlink::{MavHeader, Message};
 
 pub mod prelude;
 
-#[cfg(feature = "parameter_repo")]
-pub mod parameter_repo;
+#[cfg(any(feature = "parameter_protocol"))]
+pub mod microservices;
 
 mod types;
 mod util;
@@ -110,7 +114,7 @@ enum Task<M: mavlink::Message> {
     Emit {
         header: MavHeader,
         message: M,
-        backchannel: oneshot::Sender<Result<(), AsyncMavlinkError>>,
+        backchannel: oneshot::Sender<Result<usize, AsyncMavlinkError>>,
     },
     Subscribe {
         message_type: MavMessageType<M>,
@@ -120,12 +124,12 @@ enum Task<M: mavlink::Message> {
 
 // TODO make this failable if no heartbeat is received
 impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M> {
-    /// Construct a new MavlinkConnectionHandler
+    /// Construct a new [`AsyncMavConn`]
     ///
     /// # Arguments
     ///
-    /// * `address` - MAVLink connection `&str`. Equivalent to the `address` argument in
-    /// [mavlink::connect](https://docs.rs/mavlink/*/mavlink/fn.connect.html)
+    /// * `address`: MAVLink connection [`&str`]. Equivalent to the `address` argument in the
+    ///   [`mavlink::connect`](mavlink::connect) function.
     ///
     /// # Examples
     ///
@@ -140,7 +144,7 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
     ///     smol::spawn(async move { future.await }).detach();
     ///     // ...
     /// #   conn.send_default(&MavMessage::HEARTBEAT(Default::default())).await?;
-    /// # Ok(())
+    ///     Ok(())
     /// })
     /// # }
     /// ```
@@ -150,7 +154,7 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
     ) -> Result<(Arc<Self>, impl Future<Output = impl Send> + Send), AsyncMavlinkError> {
         let mut conn = mavlink::connect::<M>(address)?;
         conn.set_protocol_version(mavlink_version);
-        #[cfg(feature = "logging")]
+        #[cfg(feature = "log")]
         log::debug!(
             "connected to `{}` using MAVLink {:?}",
             address,
@@ -161,7 +165,7 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
 
         let f = {
             let last_heartbeat = last_heartbeat.clone();
-            #[cfg(feature = "logging")]
+            #[cfg(feature = "log")]
             log::debug!("started event loop");
             async move {
                 let mut subscriptions: HashMap<_, Vec<UnboundedSender<M>>> = HashMap::new();
@@ -191,7 +195,7 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
                             message_type,
                             backchannel,
                         }) => {
-                            #[cfg(feature = "logging")]
+                            #[cfg(feature = "log")]
                             log::debug!("subscribed to {}", message_type);
                             // find existing subscriptions for this message
                             let message_subs = subscriptions
@@ -208,7 +212,7 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
                         }) => {
                             // Send the message and send back any error which occurred on sending
                             let result = conn.send(&header, &message).map_err(|e| e.into());
-                            #[cfg(feature = "logging")]
+                            #[cfg(feature = "log")]
                             log::trace!(
                                 "sent a message to system {}, component {}:\n{:#?}",
                                 header.system_id,
@@ -219,7 +223,7 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
                         }
                         Either::Right(Ok((_header, message))) => {
                             if message.message_id() == heartbeat_id {
-                                #[cfg(feature = "logging")]
+                                #[cfg(feature = "log")]
                                 log::debug!(
                                     "received heartbeat from system {}, component {}",
                                     _header.system_id,
@@ -227,7 +231,7 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
                                 );
                                 last_heartbeat.rcu(|_| Some(Arc::new(Instant::now())));
                             } else {
-                                #[cfg(feature = "logging")]
+                                #[cfg(feature = "log")]
                                 log::trace!(
                                     "received a message from system {}, component {}:\n{:?}",
                                     _header.system_id,
@@ -264,13 +268,14 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
         ))
     }
 
-    /// Subscribe to all new MavMessages of the given MavMessageType
+    /// Subscribe to all new instances of [`MavMessage`](mavlink::common::MavMessage) of the given
+    /// [`MavMessageType`]
     ///
     /// This returns a never-ending Stream of MavMessages.
     ///
     /// # Arguments
     ///
-    /// * `message_type` - `MavMessageType` of the desired messages
+    /// * `message_type`: [`MavMessageType`] of the desired messages
     ///
     /// # Examples
     ///
@@ -302,7 +307,7 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
     pub async fn subscribe(
         &self,
         message_type: MavMessageType<M>,
-    ) -> Result<Pin<Box<dyn Stream<Item = M>>>, AsyncMavlinkError> {
+    ) -> Result<Pin<Box<dyn Stream<Item = M> + Send + Sync>>, AsyncMavlinkError> {
         let (backchannel, rx) = mpsc::unbounded();
 
         self.task_dispatcher
@@ -315,11 +320,11 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
         Ok(Box::pin(rx))
     }
 
-    /// Awaits the next MavMessage of the given MavMessageType
+    /// Awaits the next [`MavMessage`](mavlink::common::MavMessage) of the given [`MavMessageType`]
     ///
     /// # Arguments
     ///
-    /// * `message_type` - `MavMessageType` of the desired messages
+    /// * `message_type`: [`MavMessageType`] of the desired messages
     ///
     /// # Examples
     ///
@@ -362,11 +367,11 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
         rx.next().map(|m| m.expect("Oh no!")).await
     }
 
-    /// Send a `MavMessage` to the vehicle
+    /// Send a [`MavMessage`](mavlink::common::MavMessage) to the target system
     ///
     /// # Arguments
     ///
-    /// * `message` - `MavMessage` to send
+    /// * `message`: [`MavMessage`](mavlink::common::MavMessage) to send
     ///
     /// # Examples
     ///
@@ -390,7 +395,7 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
     /// # Ok(())
     /// # })}
     /// ```
-    pub async fn send(&self, header: &MavHeader, message: &M) -> Result<(), AsyncMavlinkError> {
+    pub async fn send(&self, header: &MavHeader, message: &M) -> Result<usize, AsyncMavlinkError> {
         let (backchannel, receiver) = oneshot::channel();
         self.task_dispatcher
             .clone() // TODO get rid of clone
@@ -404,11 +409,11 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
         receiver.await.map_err(AsyncMavlinkError::from)?
     }
 
-    /// Send a `MavMessage` to the vehicle
+    /// Send a [`MavMessage`](mavlink::common::MavMessage) to the target system
     ///
     /// # Arguments
     ///
-    /// * `message` - `MavMessage` to send
+    /// * `message`: [`MavMessage`](mavlink::common::MavMessage) to send
     ///
     /// # Examples
     ///
@@ -429,11 +434,12 @@ impl<M: 'static + mavlink::Message + Clone + Debug + Send + Sync> AsyncMavConn<M
     /// # Ok(())
     /// # })}
     /// ```
-    pub async fn send_default(&self, message: &M) -> Result<(), AsyncMavlinkError> {
-        Ok(self.send(&MavHeader::default(), message).await?)
+    pub async fn send_default(&self, message: &M) -> Result<usize, AsyncMavlinkError> {
+        self.send(&MavHeader::default(), message).await
     }
 
-    /// Returns the `Instant` from the last received HEARTBEAT
+    /// Returns the [`Instant`](std::time::Instant) from when the last
+    /// [`HEARTBEAT`](mavlink::common::HEARTBEAT_DATA) was received
     pub async fn last_heartbeat(&self) -> Option<Instant> {
         self.last_heartbeat.load_full().map(|arc| *arc)
     }
