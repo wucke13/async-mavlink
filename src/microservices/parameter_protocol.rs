@@ -185,7 +185,7 @@ impl<F: FnMut() -> Box<dyn Future<Output = T> + Unpin>, T, const N: usize, const
                 let msg = MavMessage::PARAM_SET(mavlink::common::PARAM_SET_DATA {
                     target_system: self.target_system_id,
                     target_component: self.target_component_id,
-                    param_id: to_char_arr(param_name),
+                    param_id: encode_param_id(param_name),
                     param_value,
                     param_type: *param_type,
                 });
@@ -263,7 +263,7 @@ impl<F: FnMut() -> Box<dyn Future<Output = T> + Unpin>, T, const N: usize, const
             // We now have the param with this value in cache
             self.missing_indeces.remove(param_index);
             self.params
-                .insert(to_string(param_id), (*param_value, *param_type));
+                .insert(decode_param_id(param_id), (*param_value, *param_type));
         } else {
             panic!("this is impossible");
         }
@@ -335,7 +335,7 @@ impl<F: FnMut() -> Box<dyn Future<Output = T> + Unpin>, T, const N: usize, const
         MavMessage::PARAM_REQUEST_READ(PARAM_REQUEST_READ_DATA {
             target_system: self.target_system_id,
             target_component: self.target_component_id,
-            param_id: to_char_arr(param_id),
+            param_id: encode_param_id(param_id),
             param_index,
         })
     }

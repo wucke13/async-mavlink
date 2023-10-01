@@ -100,7 +100,7 @@ mod types;
 mod util;
 
 pub use types::{AsyncMavlinkError, MavMessageType};
-pub use util::{to_char_arr, to_string};
+pub use util::encode_param_id;
 
 /// An async adapter for a MAVLink connection
 ///

@@ -58,7 +58,7 @@ fn main() -> Result<(), AsyncMavlinkError> {
         let mut parameters = HashMap::new();
         info!("beginning to collect the parameters into a HashMap");
         while let Some(MavMessage::PARAM_VALUE(data)) = (stream.next()).await {
-            let name = to_string(&data.param_id);
+            let name = decode_param_id(&data.param_id);
             trace!(
                 "storing parameter {:>4}/{:<4} {:>16}\r",
                 parameters.len(),

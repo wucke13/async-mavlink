@@ -1,18 +1,14 @@
-/// Extract String from mavlink's PARAM_VALUE_DATA struct
-pub fn to_string(input_slice: &[char]) -> String {
-    input_slice
-        .iter()
-        .filter(|c| **c != char::from(0))
-        .collect()
+/// Decode param_id from mavlink's PARAM_VALUE_DATA struct
+pub fn decode_param_id(bytes: &[u8; 16]) -> String {
+    std::str::from_utf8(bytes)
+        .unwrap()
+        .trim_end_matches('\0')
+        .to_string()
 }
 
-/// Create char array for mavlink's PARAM_VALUE_DATA struct
-pub fn to_char_arr(input: &str) -> [char; 16] {
-    let mut result = [' '; 16];
-    input
-        .chars()
-        .enumerate()
-        .take(16)
-        .for_each(|(i, e)| result[i] = e);
-    result
+/// Encode param_id from mavlink's PARAM_VALUE_DATA struct
+pub fn encode_param_id(name: &str) -> [u8; 16] {
+    let mut bytes = [0u8; 16];
+    bytes[..name.len()].copy_from_slice(name.as_bytes());
+    bytes
 }
