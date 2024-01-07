@@ -20,12 +20,12 @@ async-trait = "0.1"
 blocking = "1.0"
 futures = "0.3"
 lazy_static = "1.4"
-mavlink = "0.10"
+mavlink = "0.12"
 thiserror = "1.0"
 log = { version = "0.4", optional = true }
 
 [dev-dependencies]
-simple_logger = "1"
+simple_logger = "4.2"
 smol = "1"
 log = "*"
 
